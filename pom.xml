@@ -34,7 +34,12 @@
 
 	<dependencies>
 		<!-- Compile/runtime dependencies -->
-		
+
+		<dependency>
+			<groupId>com.google.cloud</groupId>
+			<artifactId>google-cloud-datastore</artifactId>
+		</dependency>
+
 		<dependency>
 			<groupId>com.google.appengine</groupId>
 			<artifactId>appengine-api-1.0-sdk</artifactId>
@@ -73,7 +78,12 @@
 			<artifactId>jersey-hk2</artifactId>
 			<version>3.1.10</version>
 		</dependency>
-		
+
+		<dependency>
+			<groupId>org.glassfish.jaxb</groupId>
+			<artifactId>jaxb-runtime</artifactId>
+			<version>4.0.5</version>
+		</dependency>
 		
 		<dependency>
 		    <groupId>jakarta.platform</groupId>
