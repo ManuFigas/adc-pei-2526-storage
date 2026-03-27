@@ -2,6 +2,7 @@ package pt.unl.fct.di.adc.firstwebapp.resources;
 
 import java.util.logging.Logger;
 
+import com.google.cloud.datastore.*;
 import org.apache.commons.codec.digest.DigestUtils;
 
 import jakarta.ws.rs.POST;
@@ -14,10 +15,6 @@ import jakarta.ws.rs.core.Response.Status;
 import com.google.gson.Gson;
 
 import com.google.cloud.Timestamp;
-import com.google.cloud.datastore.Key;
-import com.google.cloud.datastore.Entity;
-import com.google.cloud.datastore.Datastore;
-import com.google.cloud.datastore.DatastoreOptions;
 
 import pt.unl.fct.di.adc.firstwebapp.util.LoginData;
 import pt.unl.fct.di.adc.firstwebapp.util.RegisterData;
@@ -77,5 +74,49 @@ public class RegisterResource {
 
         return Response.ok().build();
 
+    }
+
+    @POST
+    @Path("/v3")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public Response registerUserV3(RegisterData data) {
+        LOG.fine("Attempt to register user: " + data.username);
+
+        if(!data.validRegistration()) {
+            return Response.status(Status.BAD_REQUEST).entity("Missing or wrong parameter.").build();
+        }
+
+        try {
+            Transaction txn = datastore.newTransaction();
+            Key userKey = datastore.newKeyFactory().setKind("User").newKey(data.username);
+            Entity user = txn.get(userKey);
+
+            if(user != null) {
+                txn.rollback();
+                return Response.status(Status.CONFLICT).entity("User already exists.").build();
+            }
+            else {
+                user = Entity.newBuilder(userKey).set("user_name", data.name)
+                        .set("user_pwd", DigestUtils.sha512Hex(data.password))
+                        .set("user_email", data.email)
+                        .set("user_creation_time", Timestamp.now())
+                        .build();
+                txn.put(user);
+                txn.commit();
+                LOG.info("User registered " + data.username);
+                return Response.ok().build();
+            }
+        }
+        catch (DatastoreException e) {
+            LOG.severe("Error registered user: "+ e.getMessage());
+            return Response.status(Status.INTERNAL_SERVER_ERROR).entity("Error registering user.").build();
+        }
+        finally {
+            /*
+            if (txn.isActive()) {
+                txn.rollback();
+            }
+             */
+        }
     }
 }
