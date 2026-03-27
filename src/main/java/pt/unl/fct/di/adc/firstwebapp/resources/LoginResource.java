@@ -2,6 +2,10 @@ package pt.unl.fct.di.adc.firstwebapp.resources;
 
 import java.util.logging.Logger;
 
+import com.google.cloud.Timestamp;
+import com.google.cloud.datastore.*;
+import org.apache.commons.codec.digest.DigestUtils;
+
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
@@ -11,6 +15,7 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
+import org.checkerframework.checker.units.qual.C;
 import pt.unl.fct.di.adc.firstwebapp.util.AuthToken;
 import pt.unl.fct.di.adc.firstwebapp.util.LoginData;
 
@@ -25,6 +30,8 @@ public class LoginResource {
 	 * Logger Object
 	 */
 	private static final Logger LOG = Logger.getLogger(LoginResource.class.getName());
+	private static final Datastore datastore = DatastoreOptions.getDefaultInstance().getService();
+	private static final KeyFactory userKeyFactory = datastore.newKeyFactory().setKind("User");
 
 	private final Gson g = new Gson();
 	
@@ -55,4 +62,97 @@ public class LoginResource {
 		}
 	}
 
+	@POST
+	@Path("/v1")
+	@Consumes(MediaType.APPLICATION_JSON)
+	public Response doLoginV1(LoginData data) {
+		LOG.fine("Attempt to login user: " + data.username);
+
+		Key userKey = userKeyFactory.newKey(data.username);
+		Entity user = datastore.get(userKey);
+
+		if(user != null) {
+			String hashedPWD = user.getString("user_pwd");
+			if(hashedPWD.equals(DigestUtils.sha512Hex(data.password))) {
+				LOG.info("User " + data.username + " logged in sucessfully.");
+				AuthToken token = new AuthToken(data.username);
+				return Response.ok(g.toJson(token)).build();
+			}
+			else {
+				LOG.warning("Wrong password for: " + data.username);
+				return Response.status(Response.Status.FORBIDDEN).build();
+			}
+		}
+		else {
+			LOG.warning("Failed login attempt for username: " + data.username);
+			return Response.status(Response.Status.FORBIDDEN).build();
+		}
+	}
+
+	@POST
+	@Path("/v1a")
+	@Consumes(MediaType.APPLICATION_JSON)
+	public Response doLoginV1a(LoginData data) {
+		LOG.fine("Attempt to login user: " + data.username);
+
+		Key userKey = userKeyFactory.newKey(data.username);
+		Entity user = datastore.get(userKey);
+
+		if(user != null) {
+			String hashedPWD = user.getString("user_pwd");
+			if(hashedPWD.equals(DigestUtils.sha512Hex(data.password))) {
+				user = Entity.newBuilder(user)
+						.set("user_login_data", Timestamp.now())
+						.build();
+				datastore.update(user);
+				LOG.info("User " + data.username + " logged in sucessfully.");
+				AuthToken token = new AuthToken(data.username);
+				return Response.ok(g.toJson(token)).build();
+			}
+			else {
+				LOG.warning("Wrong password for: " + data.username);
+				return Response.status(Response.Status.FORBIDDEN).entity("Incorrect username or password.").build();
+			}
+		}
+		else {
+			LOG.warning("Failed login attempt for username: " + data.username);
+			return Response.status(Response.Status.FORBIDDEN).build();
+		}
+	}
+
+	@POST
+	@Path("/v1b")
+	@Consumes(MediaType.APPLICATION_JSON)
+	@Produces(MediaType.APPLICATION_JSON)
+	public Response doLoginV1b(LoginData data) {
+		LOG.fine("Attempt to login user: " + data.username);
+
+		Key userKey = userKeyFactory.newKey(data.username);
+		Entity user = datastore.get(userKey);
+
+		if(user != null) {
+			String hashedPWD = user.getString("user_pwd");
+			if(hashedPWD.equals(DigestUtils.sha512Hex(data.password))) {
+				KeyFactory logKeyFactory = datastore.newKeyFactory()
+						.addAncestor(PathElement.of("User", data.username))
+						.setKind("userLog");
+				Key logKey = datastore.allocateId(logKeyFactory.newKey());
+				Entity userLog = Entity.newBuilder(logKey)
+						.set("user_login_time", Timestamp.now())
+						.build();
+				datastore.put(userLog);
+				LOG.info("User " + data.username + " logged in sucessfully.");
+				AuthToken token = new AuthToken(data.username);
+				return Response.ok(g.toJson(token)).build();
+			}
+			else {
+				LOG.warning("Wrong password for: " + data.username);
+				return Response.status(Response.Status.FORBIDDEN).build();
+			}
+		}
+		else {
+			LOG.warning("Failed login attempt for username: " + data.username);
+			return Response.status(Response.Status.FORBIDDEN).build();
+		}
+	}
 }
