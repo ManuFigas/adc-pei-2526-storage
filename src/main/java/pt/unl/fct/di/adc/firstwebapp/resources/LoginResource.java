@@ -12,7 +12,10 @@ import com.google.cloud.datastore.*;
 import com.google.cloud.datastore.StructuredQuery.PropertyFilter;
 import com.google.cloud.datastore.StructuredQuery.CompositeFilter;
 import com.google.cloud.datastore.StructuredQuery.OrderBy;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.HttpHeaders;
 import org.apache.commons.codec.digest.DigestUtils;
 
 import jakarta.ws.rs.core.MediaType;
@@ -32,6 +35,9 @@ public class LoginResource {
 
 	private static final String MESSAGE_INVALID_CREDENTIALS = "Incorrect username or password.";
 	private static final String MESSAGE_NEXT_PARAMETER_INVALID = "Request parameter 'next' must be greater or equal to 0.";
+	private static final String LOG_MESSAGE_LOGIN_ATTEMP = "Login attempt by user: ";
+	private static final String LOG_MESSAGE_LOGIN_SUCCESSFUL = "Login successful by user: ";
+	private static final String LOG_MESSAGE_WRONG_PASSWORD = "Wrong password for: ";
 	private static final String USER_PWD = "user_pwd";
 	private static final String USER_LOGIN_TIME = "user_login_time";
 
@@ -293,5 +299,97 @@ public class LoginResource {
 		return Response.status(Status.FORBIDDEN)
 				.entity(MESSAGE_INVALID_CREDENTIALS)
 				.build();
+	}
+
+	@POST
+	@Path("/v2")
+	@Consumes(MediaType.APPLICATION_JSON)
+	@Produces(MediaType.APPLICATION_JSON)
+	public Response doLoginV2(LoginData data,
+							  @Context HttpServletRequest request,
+							  @Context HttpHeaders headers) {
+		LOG.fine(LOG_MESSAGE_LOGIN_ATTEMP + data.username);
+
+		Key userKey = userKeyFactory.newKey(data.username);
+		Key ctrsKey = datastore.newKeyFactory()
+				.addAncestor(PathElement.of("User", data.username))
+				.setKind("UserStats")
+				.newKey("counters");
+		Key logKey = datastore.allocateId(
+				datastore.newKeyFactory()
+						.addAncestors(PathElement.of("User", data.username))
+						.setKind("UserLog").newKey());
+
+		Transaction txn = datastore.newTransaction();
+		try {
+			Entity user = txn.get(userKey);
+			if (user == null) {
+				LOG.warning(LOG_MESSAGE_LOGIN_ATTEMP + data.username);
+				return Response.status(Status.FORBIDDEN).entity(MESSAGE_INVALID_CREDENTIALS).build();
+			}
+
+			Entity stats = txn.get(ctrsKey);
+			if (stats == null) {
+				stats = Entity.newBuilder(ctrsKey)
+						.set("user_stats_logins", 0L)
+						.set("user_stats_failed", 0L)
+						.set("user_first_login", Timestamp.now())
+						.set("user_last_login", Timestamp.now())
+						.build();
+			}
+
+			String hashedPWD = (String) user.getString(USER_PWD);
+			if (hashedPWD.equals(DigestUtils.sha512Hex(data.password))) {
+				String cityLatLog = headers.getHeaderString("X-App-Engine-CityLatLong");
+				Entity log = Entity.newBuilder(logKey)
+						.set("user_login_ip", request.getRemoteAddr())
+						.set("user_login_host", request.getRemoteHost())
+						.set("user_login_latlon", cityLatLog != null
+								? StringValue.newBuilder(cityLatLog).setExcludeFromIndexes(true).build()
+								: StringValue.newBuilder("").setExcludeFromIndexes(true).build())
+						.set("user_login_city", headers.getHeaderString("X-App-Engine-City"))
+						.set("user_login_country", headers.getHeaderString("X-App-Engine-Country"))
+						.set("user_login_time", Timestamp.now())
+						.build();
+
+
+				Entity ustats = Entity.newBuilder(ctrsKey)
+						.set("user_stats_logins", stats.getLong("user_stats_logins") + 1)
+						.set("user_stats_failed", 0L)
+						.set("user_first_login", stats.getTimestamp("user_first_login"))
+						.set("user_last_login", Timestamp.now())
+						.build();
+
+				txn.put(log, ustats);
+				txn.commit();
+
+				AuthToken token = new AuthToken(data.username);
+				LOG.info(LOG_MESSAGE_LOGIN_SUCCESSFUL + data.username);
+				return Response.ok(g.toJson(token)).build();
+			} else {
+				Entity ustats = Entity.newBuilder(ctrsKey)
+						.set("user_stats_logins", stats.getLong("user_stats_logins"))
+						.set("user_stats_failed", stats.getLong("user_stats_failed") + 1)
+						.set("user_first_login", stats.getTimestamp("user_first_login"))
+						.set("user_last_login", stats.getTimestamp("user_last_login"))
+						.set("user_last_attempt", Timestamp.now())
+						.build();
+
+				txn.put(ustats);
+				txn.commit();
+				LOG.warning(LOG_MESSAGE_WRONG_PASSWORD + data.username);
+				return Response.status(Status.FORBIDDEN).entity(MESSAGE_INVALID_CREDENTIALS).build();
+			}
+		}
+		catch (Exception e) {
+			txn.rollback();
+			LOG.severe(e.getMessage());
+			return Response.status(Status.INTERNAL_SERVER_ERROR).build();
+		}
+		finally {
+			if(txn.isActive()) {
+				txn.rollback();
+			}
+		}
 	}
 }
