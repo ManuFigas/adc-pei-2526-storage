@@ -1,9 +1,16 @@
 package pt.unl.fct.di.adc.firstwebapp.resources;
 
+import java.util.Date;
+import java.util.List;
+import java.util.Calendar;
+import java.util.ArrayList;
 import java.util.logging.Logger;
 
 import com.google.cloud.Timestamp;
 import com.google.cloud.datastore.*;
+import com.google.cloud.datastore.StructuredQuery.PropertyFilter;
+import com.google.cloud.datastore.StructuredQuery.CompositeFilter;
+import com.google.cloud.datastore.StructuredQuery.OrderBy;
 import org.apache.commons.codec.digest.DigestUtils;
 
 import jakarta.ws.rs.Consumes;
@@ -14,6 +21,7 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.Response.Status;
 
 import org.checkerframework.checker.units.qual.C;
 import pt.unl.fct.di.adc.firstwebapp.util.AuthToken;
@@ -25,6 +33,10 @@ import com.google.gson.Gson;
 @Path("/login")
 @Produces(MediaType.APPLICATION_JSON + ";charset=utf-8")
 public class LoginResource {
+
+	private static final String MESSAGE_INVALID_CREDENTIALS = "Incorrect username or password.";
+	private static final String USER_PWD = "user_pwd";
+	private static final String USER_LOGIN_TIME = "user_login_time";
 
 	/** 
 	 * Logger Object
@@ -154,5 +166,79 @@ public class LoginResource {
 			LOG.warning("Failed login attempt for username: " + data.username);
 			return Response.status(Response.Status.FORBIDDEN).build();
 		}
+	}
+
+	@POST
+	@Path("/user/login-logs/v1")
+	@Consumes(MediaType.APPLICATION_JSON)
+	@Produces(MediaType.APPLICATION_JSON)
+	public Response getUserLoginLogsV1(LoginData data) {
+		Key userKey = userKeyFactory.newKey(data.username);
+
+		Entity user = datastore.get(userKey);
+		if(user != null && user.getString(USER_PWD).equals(DigestUtils.sha512Hex(data.password))) {
+
+			Calendar cal = Calendar.getInstance();
+			cal.add(Calendar.DATE, -1);
+			Timestamp yesterday = Timestamp.of(cal.getTime());
+
+			Query<Entity> query = Query.newEntityQueryBuilder()
+					.setKind("UserLog")
+					.setFilter(
+							CompositeFilter.and(
+									PropertyFilter.hasAncestor(
+											datastore.newKeyFactory().setKind("User").newKey(data.username)),
+									PropertyFilter.ge(USER_LOGIN_TIME, yesterday)))
+					.build();
+			QueryResults<Entity> logs = datastore.run(query);
+
+			List<Date> loginDates = new ArrayList<Date>();
+			logs.forEachRemaining(userlog -> {
+				loginDates.add(userlog.getTimestamp(USER_LOGIN_TIME).toDate());
+					});
+			return Response.ok(g.toJson(loginDates)).build();
+		}
+		return Response.status(Response.Status.FORBIDDEN)
+				.entity(MESSAGE_INVALID_CREDENTIALS)
+				.build();
+	}
+
+	@POST
+	@Path("/user/login-logs/v2")
+	@Consumes(MediaType.APPLICATION_JSON)
+	@Produces(MediaType.APPLICATION_JSON)
+	public Response getLatestLogins(LoginData data) {
+
+		Key userKey = userKeyFactory.newKey(data.username);
+
+		Entity user = datastore.get(userKey);
+		if(user != null && user.getString(USER_PWD).equals(DigestUtils.sha512Hex(data.password))) {
+
+			Calendar cal = Calendar.getInstance();
+			cal.add(Calendar.DATE, -1);
+			Timestamp yesterday = Timestamp.of(cal.getTime());
+
+			Query<Entity> query = Query.newEntityQueryBuilder()
+					.setKind("userLog")
+					.setFilter(
+							CompositeFilter.and(
+									PropertyFilter.hasAncestor(
+											datastore.newKeyFactory().setKind("User").newKey(data.username)),
+									PropertyFilter.ge(USER_LOGIN_TIME, yesterday)))
+					.setOrderBy(OrderBy.desc(USER_LOGIN_TIME))
+					.setLimit(3)
+					.build();
+			QueryResults<Entity> logs = datastore.run(query);
+
+			List<Date> loginDates = new ArrayList<Date>();
+			logs.forEachRemaining(userlog -> {
+				loginDates.add(userlog.getTimestamp(USER_LOGIN_TIME).toDate());
+			});
+
+			return Response.ok(g.toJson(loginDates)).build();
+		}
+		return Response.status(Status.FORBIDDEN)
+				.entity(MESSAGE_INVALID_CREDENTIALS)
+				.build();
 	}
 }
